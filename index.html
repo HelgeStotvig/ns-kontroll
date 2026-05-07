@@ -774,6 +774,7 @@
             <div class="hit-row-inner">
               <div>
                 <div class="hit-ref">${esc(hit.withdrawn.Referanse)}</div>
+                ${hit.withdrawn.NorskTittel ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;font-style:italic;">${esc(hit.withdrawn.NorskTittel)}</div>` : ''}
                 <div class="hit-found-as">Funnet som: ${esc(hit.docRef)}</div>
                 ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
               </div>
@@ -823,10 +824,10 @@
     XLSX.utils.book_append_sheet(wb, summarySheet, 'Sammendrag');
 
     // Sheet 2: Utgåtte funn
-    const hitsData = [['Dokument', 'Funnet som', 'Referanse (utgått)', 'Trukket tilbake', 'Erstattet av']];
+    const hitsData = [['Dokument', 'Funnet som', 'Referanse (utgått)', 'Norsk tittel', 'Trukket tilbake', 'Erstattet av']];
     for (const doc of lastResults) {
       for (const hit of doc.hits) {
-        hitsData.push([doc.fileName, hit.docRef, hit.withdrawn.Referanse, hit.withdrawn.Dato || '', hit.withdrawn.ErstattetAv || 'Ikke oppgitt']);
+        hitsData.push([doc.fileName, hit.docRef, hit.withdrawn.Referanse, hit.withdrawn.NorskTittel || '', hit.withdrawn.Dato || '', hit.withdrawn.ErstattetAv || 'Ikke oppgitt']);
       }
     }
     const hitsSheet = XLSX.utils.aoa_to_sheet(hitsData);
