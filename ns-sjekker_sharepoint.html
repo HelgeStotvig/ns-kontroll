@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NS-Kontroll</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,700;1,9..144,300&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f4f1eb;
+      --surface: #fffdf8;
+      --border: #ddd8cc;
+      --ink: #1a1814;
+      --muted: #8a8278;
+      --accent: #c84b2f;
+      --accent-light: #fdf0ed;
+      --green: #2a6b3c;
+      --green-light: #eef6f1;
+      --blue: #1e4d8c;
+      --blue-light: #eef2fa;
+      --yellow: #7a6100;
+      --yellow-light: #fdf8e3;
+    }
+
+    /* SP-fix: fjernet position:fixed på body::before – forårsaker rullproblemer i iframe */
+    body {
+      font-family: 'DM Mono', monospace;
+      background: var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+      padding: 48px 16px 80px;
+    }
+
+    .container { max-width: 920px; margin: 0 auto; position: relative; z-index: 1; }
+
+    header { text-align: center; margin-bottom: 48px; }
+    header h1 { font-family: 'Fraunces', serif; font-weight: 700; font-size: clamp(2rem, 5vw, 3.2rem); letter-spacing: -0.02em; color: var(--ink); line-height: 1.1; }
+    header p  { margin-top: 10px; font-size: 0.8rem; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+    .divider  { width: 48px; height: 2px; background: var(--accent); margin: 16px auto; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 36px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+
+    .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    @media (max-width: 600px) { .upload-grid { grid-template-columns: 1fr; } }
+
+    /* ── Drop zones ── */
+    .drop-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: 4px;
+      padding: 28px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      background: var(--bg);
+      min-height: 140px;
+      position: relative; /* SP-fix: hjelper med klikk-propagering */
+    }
+    .drop-zone:hover, .drop-zone.dragging { border-color: var(--blue); background: var(--blue-light); }
+    .drop-zone.has-file { border-color: var(--green); background: var(--green-light); }
+
+    /* SP-fix: input er ikke display:none men heller transparent overlay – sikrer klikk fungerer i sandboxed iframe */
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+      font-size: 0; /* skjuler tekst i noen nettlesere */
+    }
+    /* SP-fix: fjern-knapp og andre elementer over input trenger z-index */
+    .drop-zone .icon { font-size: 2rem; line-height: 1; position: relative; z-index: 1; pointer-events: none; }
+    .drop-zone .label { font-size: 0.72rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); text-align: center; position: relative; z-index: 1; pointer-events: none; }
+    .drop-zone .accepted { font-size: 0.65rem; color: var(--muted); opacity: 0.75; position: relative; z-index: 1; pointer-events: none; }
+    .drop-zone .hint { font-size: 0.7rem; color: var(--muted); position: relative; z-index: 1; pointer-events: none; }
+
+    /* File list inside drop zone */
+    .file-list { width: 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 4px; position: relative; z-index: 2; }
+    .file-item {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(42,107,60,0.08); border: 1px solid #b8ddc6;
+      border-radius: 3px; padding: 4px 8px; font-size: 0.68rem;
+      color: var(--green); font-weight: 500;
+    }
+    .file-item .remove-btn {
+      cursor: pointer; color: var(--accent); font-size: 0.75rem;
+      line-height: 1; padding: 2px 4px; opacity: 0.7;
+      position: relative; z-index: 3;
+    }
+    .file-item .remove-btn:hover { opacity: 1; }
+
+    /* ── Buttons ── */
+    .btn-row { display: flex; gap: 12px; }
+
+    .btn {
+      flex: 1;
+      padding: 14px;
+      border: none;
+      border-radius: 2px;
+      background: var(--ink);
+      color: #fff;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.78rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn:hover:not(:disabled) { background: #333; }
+    .btn:active:not(:disabled) { transform: scale(0.99); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn.secondary {
+      background: transparent;
+      color: var(--green);
+      border: 1.5px solid var(--green);
+    }
+    .btn.secondary:hover:not(:disabled) { background: var(--green-light); }
+
+    .spinner {
+      width: 15px; height: 15px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg { margin-top: 12px; font-size: 0.74rem; color: var(--accent); text-align: center; letter-spacing: 0.03em; }
+
+    /* ── Loading overlay for libs ── */
+    #libStatus {
+      text-align: center;
+      padding: 12px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    /* ── Summary stats ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+    @media (max-width: 500px) { .stats-grid { grid-template-columns: 1fr; } }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 22px 16px; text-align: center; }
+    .stat-card .val { font-family: 'Fraunces', serif; font-size: 2.8rem; font-weight: 700; line-height: 1; margin-bottom: 6px; }
+    .stat-card .val.red   { color: var(--accent); }
+    .stat-card .val.green { color: var(--green); }
+    .stat-card .val.dark  { color: var(--ink); }
+    .stat-card .stat-label { font-size: 0.63rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+    /* ── Per-document section ── */
+    .doc-section { margin-bottom: 28px; }
+
+    .doc-header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--ink);
+    }
+
+    .doc-title {
+      font-family: 'Fraunces', serif;
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+
+    .doc-meta {
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+
+    .doc-badge-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .doc-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 2px;
+      font-size: 0.67rem;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .doc-badge.hits  { background: var(--accent-light); color: var(--accent); border: 1px solid #f0c4b8; }
+    .doc-badge.ok    { background: var(--green-light); color: var(--green); border: 1px solid #b8ddc6; }
+    .doc-badge.total { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+
+    /* Subsection labels */
+    .sub-label {
+      font-size: 0.6rem;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      background: #faf8f3;
+    }
+
+    /* Hit rows */
+    .hit-row {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 15px 24px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    .hit-row:last-child { border-bottom: none; }
+    .hit-row:hover { background: #f9f7f2; }
+    .hit-row-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .hit-ref      { font-size: 0.82rem; font-weight: 500; color: var(--ink); }
+    .hit-found-as { font-size: 0.67rem; color: var(--blue); margin-top: 2px; }
+    .hit-date     { font-size: 0.67rem; color: var(--muted); margin-top: 2px; }
+    .hit-replaced { font-size: 0.76rem; margin-top: 4px; }
+
+    .badge {
+      display: inline-block; padding: 3px 10px; border-radius: 2px;
+      font-size: 0.62rem; font-weight: 500; letter-spacing: 0.06em;
+      text-transform: uppercase; white-space: nowrap;
+    }
+    .badge.red { background: var(--accent-light); color: var(--accent); border: 1px solid #f0c4b8; }
+
+    /* OK chips */
+    .ok-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 24px; }
+    .ok-chip { padding: 3px 10px; border-radius: 2px; font-size: 0.68rem; background: var(--green-light); color: var(--green); border: 1px solid #b8ddc6; font-weight: 500; }
+
+    .result-block { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+
+    /* No hits */
+    .all-ok {
+      display: flex; align-items: center; gap: 10px;
+      padding: 16px 24px;
+      font-size: 0.75rem;
+      color: var(--green);
+      background: var(--green-light);
+      border: 1px solid #b8ddc6;
+      border-radius: 4px;
+    }
+
+    #results { animation: fadeUp 0.3s ease; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .export-row { display: flex; justify-content: flex-end; margin-bottom: 20px; }
+
+    /* SP-fix: varselboks hvis nettleseren blokkerer noe */
+    .sp-warning {
+      background: var(--yellow-light);
+      border: 1px solid #e0d080;
+      color: var(--yellow);
+      border-radius: 4px;
+      padding: 10px 16px;
+      font-size: 0.72rem;
+      margin-bottom: 16px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>NS-Kontroll</h1>
+    <div class="divider"></div>
+    <p>Se om dokumentet ditt inneholder tilbaketrukne standarder</p>
+  </header>
+
+  <div id="spWarning" class="sp-warning">
+    ⚠ Nettleseren din blokkerte nedlasting av Excel-filen. Prøv å åpne verktøyet i en egen fane i stedet.
+  </div>
+
+  <div id="libStatus">Laster biblioteker…</div>
+
+  <div class="card">
+    <div class="upload-grid">
+      <!-- SP-fix: input er nå transparent overlay over hele drop-sonen, ikke display:none -->
+      <div class="drop-zone" id="docZone"
+           ondragover="handleDragOver(event,'docZone')"
+           ondragleave="handleDragLeave(event,'docZone')"
+           ondrop="handleDrop(event,'docZone','doc')">
+        <input type="file" id="docInput" accept=".docx,.pdf" multiple onchange="handleFileSelect(event,'doc')" />
+        <div class="icon">📄</div>
+        <div class="label">Dokumenter</div>
+        <div class="accepted">.docx eller .pdf – flere tillatt</div>
+        <div id="docStatus" class="hint">Klikk eller dra filer hit</div>
+        <div class="file-list" id="docFileList"></div>
+      </div>
+
+      <!-- Excel withdrawn list -->
+      <div class="drop-zone" id="xlsxZone"
+           ondragover="handleDragOver(event,'xlsxZone')"
+           ondragleave="handleDragLeave(event,'xlsxZone')"
+           ondrop="handleDrop(event,'xlsxZone','xlsx')">
+        <input type="file" id="xlsxInput" accept=".xlsx" onchange="handleFileSelect(event,'xlsx')" />
+        <div class="icon">📊</div>
+        <div class="label">Oversikt utgåtte NS (.xlsx)</div>
+        <div id="xlsxStatus" class="hint">Klikk eller dra fil hit</div>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn" id="analyzeBtn" onclick="analyze()" disabled>
+        <span id="btnText">Analyser standarder</span>
+      </button>
+    </div>
+    <div id="errorMsg" class="error-msg" style="display:none;"></div>
+  </div>
+
+  <div id="results" style="display:none;"></div>
+</div>
+
+<!-- SP-fix: laster biblioteker dynamisk med feilhåndtering -->
+<script>
+(function loadLibs() {
+  const statusEl = document.getElementById('libStatus');
+
+  function loadScript(src, onLoad, onError) {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = onLoad;
+    s.onerror = onError;
+    document.head.appendChild(s);
+  }
+
+  // Laster XLSX → mammoth → pdf.js i rekkefølge
+  loadScript(
+    'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+    () => {
+      loadScript(
+        'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
+        () => {
+          loadScript(
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+            () => {
+              try {
+                pdfjsLib.GlobalWorkerOptions.workerSrc =
+                  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+              } catch(e) {}
+              statusEl.textContent = '';
+              statusEl.style.display = 'none';
+            },
+            () => { statusEl.textContent = '⚠ Kunne ikke laste PDF-bibliotek. PDF-analyse vil ikke fungere.'; }
+          );
+        },
+        () => { statusEl.textContent = '⚠ Kunne ikke laste DOCX-bibliotek.'; }
+      );
+    },
+    () => { statusEl.textContent = '⚠ Kunne ikke laste Excel-bibliotek. Sjekk nettverkstilgang.'; }
+  );
+})();
+</script>
+
+<script>
+  let docFiles  = [];
+  let xlsxFile  = null;
+  let lastResults = null;
+
+  // ── Drag & drop ──────────────────────────────────────────────────────────
+
+  function handleDragOver(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById(id).classList.add('dragging');
+  }
+  function handleDragLeave(e, id) {
+    e.stopPropagation();
+    document.getElementById(id).classList.remove('dragging');
+  }
+
+  function handleDrop(e, id, type) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById(id).classList.remove('dragging');
+    const files = [...e.dataTransfer.files];
+    if (type === 'doc') addDocFiles(files);
+    else if (files[0]) setXlsxFile(files[0]);
+  }
+
+  function handleFileSelect(e, type) {
+    const files = [...e.target.files];
+    if (type === 'doc') addDocFiles(files);
+    else if (files[0]) setXlsxFile(files[0]);
+    e.target.value = '';
+  }
+
+  function addDocFiles(files) {
+    const valid = files.filter(f => f.name.match(/\.(docx|pdf)$/i));
+    for (const f of valid) {
+      if (!docFiles.find(x => x.name === f.name && x.size === f.size)) {
+        docFiles.push(f);
+      }
+    }
+    renderDocFileList();
+    updateBtn();
+  }
+
+  function removeDocFile(index) {
+    docFiles.splice(index, 1);
+    renderDocFileList();
+    updateBtn();
+  }
+
+  function renderDocFileList() {
+    const zone = document.getElementById('docZone');
+    const list = document.getElementById('docFileList');
+    const hint = document.getElementById('docStatus');
+
+    if (docFiles.length === 0) {
+      zone.classList.remove('has-file');
+      hint.style.display = '';
+      hint.className = 'hint';
+      hint.textContent = 'Klikk eller dra filer hit';
+      list.innerHTML = '';
+      return;
+    }
+
+    zone.classList.add('has-file');
+    hint.style.display = 'none';
+    list.innerHTML = docFiles.map((f, i) =>
+      `<div class="file-item">
+        <span>📄 ${esc(f.name)}</span>
+        <span class="remove-btn" onclick="event.stopPropagation();removeDocFile(${i})">✕</span>
+      </div>`
+    ).join('');
+  }
+
+  function setXlsxFile(f) {
+    xlsxFile = f;
+    document.getElementById('xlsxZone').classList.add('has-file');
+    const s = document.getElementById('xlsxStatus');
+    s.className = 'file-name';
+    s.style.cssText = 'font-size:0.75rem;color:var(--green);font-weight:500;text-align:center;word-break:break-all;position:relative;z-index:1;pointer-events:none;';
+    s.textContent = '✓ ' + f.name;
+    updateBtn();
+  }
+
+  function updateBtn() {
+    document.getElementById('analyzeBtn').disabled = !(docFiles.length > 0 && xlsxFile);
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+  }
+
+  // ── DOCX extraction ───────────────────────────────────────────────────────
+
+  async function extractTextFromDocx(file) {
+    if (typeof mammoth === 'undefined') throw new Error('DOCX-biblioteket er ikke lastet ennå.');
+    const buf = await file.arrayBuffer();
+    const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+    const html = result.value;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const BLOCK = new Set(['P','LI','TD','TH','DIV','H1','H2','H3','H4','H5','H6','TR']);
+    let fullText = '';
+    let lineBuffer = '';
+
+    function flush() {
+      const t = lineBuffer.trim();
+      if (t) fullText += t + '\n';
+      lineBuffer = '';
+    }
+
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent;
+        if (text) {
+          if (lineBuffer.length > 0 && !/\s$/.test(lineBuffer) && !/^\s/.test(text)) {
+            const parent = node.parentNode;
+            const gp = parent && parent.parentNode;
+            if (!(gp && BLOCK.has(gp.nodeName))) lineBuffer += ' ';
+          }
+          lineBuffer += text;
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        if (BLOCK.has(node.nodeName)) {
+          flush();
+          for (const child of node.childNodes) walk(child);
+          flush();
+        } else {
+          for (const child of node.childNodes) walk(child);
+        }
+      }
+    }
+
+    walk(doc.body);
+    flush();
+
+    return fullText
+      .replace(/\u00AD/g, '')
+      .replace(/[\u2010-\u2015]/g, '-')
+      .replace(/\u00A0/g, ' ');
+  }
+
+  // ── PDF extraction ────────────────────────────────────────────────────────
+
+  async function extractTextFromPdf(file) {
+    if (typeof pdfjsLib === 'undefined') throw new Error('PDF-biblioteket er ikke lastet ennå.');
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let fullText = '';
+
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page    = await pdf.getPage(p);
+      const content = await page.getTextContent({ normalizeWhitespace: false });
+      const vp      = page.getViewport({ scale: 1 });
+
+      const items = content.items.filter(i => i.str && i.str.trim() !== '');
+      const withPos = items.map(i => ({
+        str: i.str,
+        x: i.transform[4],
+        y: vp.height - i.transform[5],
+        w: Math.abs(i.width),
+        fontSize: Math.abs(i.transform[0]) || Math.abs(i.transform[3]) || 12,
+      }));
+
+      withPos.sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x);
+
+      const LINE_TOL = 3;
+      const lines = [];
+      let cur = [], lastY = null;
+
+      for (const item of withPos) {
+        if (lastY === null || Math.abs(item.y - lastY) > LINE_TOL) {
+          if (cur.length) lines.push(cur);
+          cur = [item]; lastY = item.y;
+        } else {
+          cur.push(item); lastY = (lastY + item.y) / 2;
+        }
+      }
+      if (cur.length) lines.push(cur);
+
+      for (const line of lines) {
+        line.sort((a, b) => a.x - b.x);
+        let s = '';
+        for (let i = 0; i < line.length; i++) {
+          if (i === 0) { s += line[i].str; continue; }
+          const prev = line[i - 1];
+          const gap = line[i].x - (prev.x + prev.w);
+          if (gap > (prev.fontSize + line[i].fontSize) / 2 * 0.4) s += ' ';
+          s += line[i].str;
+        }
+        fullText += s.trim() + '\n';
+      }
+    }
+
+    return fullText
+      .replace(/\u00AD/g, '')
+      .replace(/[\u2010-\u2015]/g, '-')
+      .replace(/\u00A0/g, ' ');
+  }
+
+  async function extractText(file) {
+    const n = file.name.toLowerCase();
+    if (n.endsWith('.pdf'))  return extractTextFromPdf(file);
+    if (n.endsWith('.docx')) return extractTextFromDocx(file);
+    throw new Error('Filtypen støttes ikke: ' + file.name);
+  }
+
+  // ── NS reference matching ─────────────────────────────────────────────────
+
+  function extractNSRefs(text) {
+    const pattern = /NS\s*[-–]?\s*(?:EN\s*[-–]?\s*)?(?:ISO\s*[-–]?\s*)?\d+(?:\s*[-–]\s*\d+)*(?:\s*:\s*\d{4})?(?:\s*\+\s*(?:NA|A\d+)(?:\s*:\s*\d{4})?)?/gi;
+    const raw = text.match(pattern) || [];
+    const normalized = raw.map(r => r.trim().replace(/\s+/g, ' ').toUpperCase());
+    return [...new Set(normalized)];
+  }
+
+  function normalizeKey(str) {
+    if (!str) return '';
+    return str.toUpperCase().replace(/\s+/g, '').replace(/[-–]/g, '');
+  }
+
+  function parseRef(ref) {
+    const clean = normalizeKey(ref);
+    const m = clean.match(/^(NS(?:EN(?:ISO)?)?)(\d+)(?::(\d{4}))?/);
+    if (!m) return null;
+    return { prefix: m[1], number: m[2], year: m[3] || '', fullKey: clean };
+  }
+
+  function findMatch(docRef, withdrawnList) {
+    const docKey    = normalizeKey(docRef);
+    const docParsed = parseRef(docRef);
+
+    let match = withdrawnList.find(w => normalizeKey(w.Referanse) === docKey);
+    if (match) return { match, matchType: 'exact' };
+    if (!docParsed) return null;
+
+    match = withdrawnList.find(w => {
+      const wKey = normalizeKey(w.Referanse);
+      return docKey.startsWith(wKey) && wKey.length >= 8;
+    });
+    if (match) return { match, matchType: 'prefix' };
+
+    match = withdrawnList.find(w => {
+      const wKey = normalizeKey(w.Referanse);
+      return wKey.startsWith(docKey) && docKey.length >= 8;
+    });
+    if (match) return { match, matchType: 'prefix' };
+
+    if (docParsed.number) {
+      match = withdrawnList.find(w => {
+        const p = parseRef(w.Referanse);
+        if (!p) return false;
+        if (p.prefix !== docParsed.prefix) return false;
+        if (p.number !== docParsed.number) return false;
+        if (docParsed.year && p.year && docParsed.year !== p.year) return false;
+        return true;
+      });
+      if (match) return { match, matchType: 'number' };
+    }
+    return null;
+  }
+
+  function formatDate(val) {
+    if (!val) return '';
+    if (typeof val === 'string') return val.split('T')[0].split(' ')[0];
+    if (val instanceof Date) return val.toISOString().split('T')[0];
+    return String(val);
+  }
+
+  // ── Main analysis ─────────────────────────────────────────────────────────
+
+  async function analyze() {
+    showError('');
+    if (!docFiles.length || !xlsxFile) return;
+
+    if (typeof XLSX === 'undefined') {
+      showError('Excel-biblioteket er ikke ferdig lastet. Vent litt og prøv igjen.');
+      return;
+    }
+
+    const btn     = document.getElementById('analyzeBtn');
+    const btnText = document.getElementById('btnText');
+    btn.disabled  = true;
+    btnText.innerHTML = '<span class="spinner"></span> Analyserer…';
+
+    try {
+      const xlsxBuf  = await xlsxFile.arrayBuffer();
+      const workbook = XLSX.read(xlsxBuf, { type: 'array', cellDates: true });
+      const sheet    = workbook.Sheets[workbook.SheetNames[0]];
+      const rows     = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+      const withdrawnList = rows.map(r => ({
+        Referanse:   String(r['Referanse']   || '').trim(),
+        NorskTittel: String(r['Norsk tittel'] || '').trim(),
+        ErstattetAv: String(r['Erstattet av'] || '').trim(),
+        Dato: formatDate(r['Nasjonal tilbaketrekkingsdato'] || r['Nasjonal tilbaketrek kingsdato'] || ''),
+      })).filter(r => r.Referanse);
+
+      const docResults = [];
+      for (const file of docFiles) {
+        const docText = await extractText(file);
+        const docRefs = extractNSRefs(docText);
+        const hits = [], notFound = [];
+
+        for (const ref of docRefs) {
+          const result = findMatch(ref, withdrawnList);
+          if (result) hits.push({ docRef: ref, withdrawn: result.match, matchType: result.matchType });
+          else notFound.push(ref);
+        }
+
+        docResults.push({ fileName: file.name, totalInDoc: docRefs.length, hits, notFound });
+      }
+
+      lastResults = docResults;
+      renderResults(docResults);
+    } catch (e) {
+      console.error(e);
+      showError('Feil ved analyse: ' + e.message);
+    }
+
+    btn.disabled = false;
+    btnText.textContent = 'Analyser standarder';
+    updateBtn();
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  function renderResults(docResults) {
+    const el = document.getElementById('results');
+    el.style.display = 'block';
+
+    const totalHits = docResults.reduce((s, d) => s + d.hits.length, 0);
+    const totalRefs = docResults.reduce((s, d) => s + d.totalInDoc, 0);
+    const totalOk   = docResults.reduce((s, d) => s + d.notFound.length, 0);
+
+    let html = `
+      <div class="stats-grid">
+        <div class="stat-card"><div class="val red">${totalHits}</div><div class="stat-label">Utgåtte standarder totalt</div></div>
+        <div class="stat-card"><div class="val dark">${totalRefs}</div><div class="stat-label">Standardreferanser totalt</div></div>
+        <div class="stat-card"><div class="val green">${totalOk}</div><div class="stat-label">Ikke berørt av listen</div></div>
+      </div>
+
+      <div class="export-row">
+        <button class="btn secondary" style="flex:none;padding:10px 20px;" onclick="exportExcel()">
+          ⬇ Eksporter til Excel
+        </button>
+      </div>`;
+
+    for (const doc of docResults) {
+      const baseName = doc.fileName.replace(/\.(docx|pdf)$/i, '');
+
+      html += `<div class="doc-section">
+        <div class="doc-header">
+          <span class="doc-title">${esc(baseName)}</span>
+          <span class="doc-meta">${esc(doc.fileName)}</span>
+        </div>
+        <div class="doc-badge-row">
+          <span class="doc-badge total">${doc.totalInDoc} referanser funnet</span>
+          <span class="doc-badge hits">${doc.hits.length} utgåtte</span>
+          <span class="doc-badge ok">${doc.notFound.length} OK</span>
+        </div>`;
+
+      if (doc.hits.length === 0) {
+        html += `<div class="all-ok">✓ Ingen utgåtte standarder funnet i dette dokumentet.</div>`;
+      } else {
+        html += `<div class="result-block">
+          <div class="sub-label">Utgåtte standarder i ${esc(baseName)}</div>`;
+        for (const hit of doc.hits) {
+          const replaced = hit.withdrawn.ErstattetAv
+            ? `<span style="color:var(--ink);font-weight:500;">${esc(hit.withdrawn.ErstattetAv)}</span>`
+            : `<em style="color:var(--muted);">Ikke oppgitt</em>`;
+          html += `<div class="hit-row">
+            <div class="hit-row-inner">
+              <div>
+                <div class="hit-ref">${esc(hit.withdrawn.Referanse)}</div>
+                <div class="hit-found-as">Funnet som: ${esc(hit.docRef)}</div>
+                ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
+              </div>
+              <span class="badge red">Utgått</span>
+            </div>
+            <div class="hit-replaced">Erstattet av: ${replaced}</div>
+          </div>`;
+        }
+        html += `</div>`;
+      }
+
+      if (doc.notFound.length > 0) {
+        html += `<div class="result-block" style="margin-top:10px;">
+          <div class="sub-label">Standarder ikke funnet i utgått-listen (OK) – ${esc(baseName)}</div>
+          <div class="ok-chips">`;
+        for (const ref of doc.notFound) html += `<span class="ok-chip">${esc(ref)}</span>`;
+        html += `</div></div>`;
+      }
+
+      html += `</div>`;
+    }
+
+    el.innerHTML = html;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ── Excel export – SP-fix: bruker Blob + URL.createObjectURL i stedet for XLSX.writeFile ──
+
+  function exportExcel() {
+    if (!lastResults) return;
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Sammendrag
+    const summaryData = [['Dokument', 'Totalt referanser', 'Utgåtte funn', 'Ikke berørt']];
+    for (const doc of lastResults) {
+      summaryData.push([doc.fileName, doc.totalInDoc, doc.hits.length, doc.notFound.length]);
+    }
+    summaryData.push([
+      'TOTALT',
+      lastResults.reduce((s, d) => s + d.totalInDoc, 0),
+      lastResults.reduce((s, d) => s + d.hits.length, 0),
+      lastResults.reduce((s, d) => s + d.notFound.length, 0),
+    ]);
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    applySheetStyle(summarySheet, summaryData, true);
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'Sammendrag');
+
+    // Sheet 2: Utgåtte funn
+    const hitsData = [['Dokument', 'Funnet som', 'Referanse (utgått)', 'Trukket tilbake', 'Erstattet av']];
+    for (const doc of lastResults) {
+      for (const hit of doc.hits) {
+        hitsData.push([doc.fileName, hit.docRef, hit.withdrawn.Referanse, hit.withdrawn.Dato || '', hit.withdrawn.ErstattetAv || 'Ikke oppgitt']);
+      }
+    }
+    const hitsSheet = XLSX.utils.aoa_to_sheet(hitsData);
+    applySheetStyle(hitsSheet, hitsData, false);
+    XLSX.utils.book_append_sheet(wb, hitsSheet, 'Utgåtte funn');
+
+    // Sheet 3: OK-referanser
+    const okData = [['Dokument', 'Referanse (ikke i utgått-listen)']];
+    for (const doc of lastResults) {
+      for (const ref of doc.notFound) okData.push([doc.fileName, ref]);
+    }
+    const okSheet = XLSX.utils.aoa_to_sheet(okData);
+    applySheetStyle(okSheet, okData, false);
+    XLSX.utils.book_append_sheet(wb, okSheet, 'OK-referanser');
+
+    // SP-fix: generer Blob og bruk midlertidig <a>-tag for nedlasting
+    try {
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'NS-sjekk-' + new Date().toISOString().split('T')[0] + '.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+    } catch (err) {
+      // Fallback hvis blob-nedlasting er blokkert (svært restriktive iframe-oppsett)
+      document.getElementById('spWarning').style.display = 'block';
+      console.error('Excel-nedlasting feilet:', err);
+    }
+  }
+
+  function applySheetStyle(sheet, data, hasTotalsRow) {
+    const FONT = 'DM Mono';
+    const headerFill = { fgColor: { rgb: '1A1814' } };
+    const headerFont = { name: FONT, bold: true, color: { rgb: 'FFFDF8' }, sz: 10 };
+    const bodyFont   = { name: FONT, sz: 10 };
+    const totalFont  = { name: FONT, bold: true, sz: 10 };
+    const totFill    = { fgColor: { rgb: 'F4F1EB' } };
+
+    const nCols = data[0].length;
+    const nRows = data.length;
+
+    for (let r = 0; r < nRows; r++) {
+      for (let c = 0; c < nCols; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        if (!sheet[cellRef]) continue;
+        const isHeader = r === 0;
+        const isTotal  = hasTotalsRow && r === nRows - 1;
+        let font = bodyFont, fill = undefined;
+        const border = {
+          top:    { style: 'thin', color: { rgb: 'DDD8CC' } },
+          bottom: { style: 'thin', color: { rgb: 'DDD8CC' } },
+          left:   { style: 'thin', color: { rgb: 'DDD8CC' } },
+          right:  { style: 'thin', color: { rgb: 'DDD8CC' } },
+        };
+        if (isHeader) { font = headerFont; fill = headerFill; }
+        else if (isTotal) { font = totalFont; fill = totFill; }
+        sheet[cellRef].s = { font, fill, border, alignment: { vertical: 'center', wrapText: true } };
+      }
+    }
+
+    const colWidths = data[0].map((_, ci) => {
+      const maxLen = data.reduce((m, row) => Math.max(m, String(row[ci] || '').length), 0);
+      return { wch: Math.min(Math.max(maxLen + 2, 18), 60) };
+    });
+    sheet['!cols'] = colWidths;
+    sheet['!rows'] = data.map((_, ri) => ({ hpt: ri === 0 ? 20 : 18 }));
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+</script>
+</body>
+</html>
