@@ -49,8 +49,21 @@
       box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
 
-    .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-    @media (max-width: 600px) { .upload-grid { grid-template-columns: 1fr; } }
+    .upload-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 24px; }
+
+    /* Status for automatisk lasting av utgått-liste */
+    .list-status {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      margin-bottom: 16px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+    }
+    .list-status.ok    { background: var(--green-light); color: var(--green); border-color: #b8ddc6; }
+    .list-status.error { background: var(--accent-light); color: var(--accent); border-color: #f0c4b8; }
 
     /* ── Drop zones ── */
     .drop-zone {
@@ -295,8 +308,9 @@
   <div id="libStatus">Laster biblioteker…</div>
 
   <div class="card">
+    <div id="listStatus" class="list-status">⏳ Laster oversikt over utgåtte standarder…</div>
+
     <div class="upload-grid">
-      <!-- SP-fix: input er nå transparent overlay over hele drop-sonen, ikke display:none -->
       <div class="drop-zone" id="docZone"
            ondragover="handleDragOver(event,'docZone')"
            ondragleave="handleDragLeave(event,'docZone')"
@@ -307,17 +321,6 @@
         <div class="accepted">.docx eller .pdf – flere tillatt</div>
         <div id="docStatus" class="hint">Klikk eller dra filer hit</div>
         <div class="file-list" id="docFileList"></div>
-      </div>
-
-      <!-- Excel withdrawn list -->
-      <div class="drop-zone" id="xlsxZone"
-           ondragover="handleDragOver(event,'xlsxZone')"
-           ondragleave="handleDragLeave(event,'xlsxZone')"
-           ondrop="handleDrop(event,'xlsxZone','xlsx')">
-        <input type="file" id="xlsxInput" accept=".xlsx" onchange="handleFileSelect(event,'xlsx')" />
-        <div class="icon">📊</div>
-        <div class="label">Oversikt utgåtte NS (.xlsx)</div>
-        <div id="xlsxStatus" class="hint">Klikk eller dra fil hit</div>
       </div>
     </div>
 
@@ -361,6 +364,7 @@
               } catch(e) {}
               statusEl.textContent = '';
               statusEl.style.display = 'none';
+              loadWithdrawnList();
             },
             () => { statusEl.textContent = '⚠ Kunne ikke laste PDF-bibliotek. PDF-analyse vil ikke fungere.'; }
           );
@@ -376,7 +380,39 @@
 <script>
   let docFiles  = [];
   let xlsxFile  = null;
+  let withdrawnList = null; // Lastes automatisk fra GitHub
   let lastResults = null;
+
+  const XLSX_URL = 'https://raw.githubusercontent.com/helgestotvig/ns-kontroll/main/utg%C3%A5tte-standarder.xlsx';
+
+  // ── Auto-last utgått-liste fra GitHub ────────────────────────────────────
+
+  async function loadWithdrawnList() {
+    const statusEl = document.getElementById('listStatus');
+    try {
+      const resp = await fetch(XLSX_URL);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const buf      = await resp.arrayBuffer();
+      const workbook = XLSX.read(buf, { type: 'array', cellDates: true });
+      const sheet    = workbook.Sheets[workbook.SheetNames[0]];
+      const rows     = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+      withdrawnList = rows.map(r => ({
+        Referanse:   String(r['Referanse']   || '').trim(),
+        NorskTittel: String(r['Norsk tittel'] || '').trim(),
+        ErstattetAv: String(r['Erstattet av'] || '').trim(),
+        Dato: formatDate(r['Nasjonal tilbaketrekkingsdato'] || r['Nasjonal tilbaketrek kingsdato'] || ''),
+      })).filter(r => r.Referanse);
+
+      statusEl.className = 'list-status ok';
+      statusEl.textContent = '✓ Oversikt over utgåtte standarder lastet (' + withdrawnList.length + ' standarder)';
+      updateBtn();
+    } catch (e) {
+      statusEl.className = 'list-status error';
+      statusEl.textContent = '⚠ Kunne ikke laste oversikt: ' + e.message + '. Sjekk at filen ligger i GitHub-repositoryet.';
+      console.error(e);
+    }
+  }
 
   // ── Drag & drop ──────────────────────────────────────────────────────────
 
@@ -402,7 +438,6 @@
   function handleFileSelect(e, type) {
     const files = [...e.target.files];
     if (type === 'doc') addDocFiles(files);
-    else if (files[0]) setXlsxFile(files[0]);
     e.target.value = '';
   }
 
@@ -458,7 +493,7 @@
   }
 
   function updateBtn() {
-    document.getElementById('analyzeBtn').disabled = !(docFiles.length > 0 && xlsxFile);
+    document.getElementById('analyzeBtn').disabled = !(docFiles.length > 0 && withdrawnList);
   }
 
   function showError(msg) {
@@ -648,7 +683,7 @@
 
   async function analyze() {
     showError('');
-    if (!docFiles.length || !xlsxFile) return;
+    if (!docFiles.length || !withdrawnList) return;
 
     if (typeof XLSX === 'undefined') {
       showError('Excel-biblioteket er ikke ferdig lastet. Vent litt og prøv igjen.');
@@ -661,18 +696,6 @@
     btnText.innerHTML = '<span class="spinner"></span> Analyserer…';
 
     try {
-      const xlsxBuf  = await xlsxFile.arrayBuffer();
-      const workbook = XLSX.read(xlsxBuf, { type: 'array', cellDates: true });
-      const sheet    = workbook.Sheets[workbook.SheetNames[0]];
-      const rows     = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-
-      const withdrawnList = rows.map(r => ({
-        Referanse:   String(r['Referanse']   || '').trim(),
-        NorskTittel: String(r['Norsk tittel'] || '').trim(),
-        ErstattetAv: String(r['Erstattet av'] || '').trim(),
-        Dato: formatDate(r['Nasjonal tilbaketrekkingsdato'] || r['Nasjonal tilbaketrek kingsdato'] || ''),
-      })).filter(r => r.Referanse);
-
       const docResults = [];
       for (const file of docFiles) {
         const docText = await extractText(file);
