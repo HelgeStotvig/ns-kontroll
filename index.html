@@ -777,6 +777,7 @@
                 ${hit.withdrawn.NorskTittel ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;">${esc(hit.withdrawn.NorskTittel)}</div>` : ''}
                 <div class="hit-found-as">Funnet som: ${esc(hit.docRef)}</div>
                 ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
+                <a href="https://www.standard.no/no/Nettbutikk/produktkatalog/Produktpresentasjon/?ProductID=${encodeURIComponent(hit.withdrawn.Referanse)}" target="_blank" style="font-size:0.67rem;color:var(--blue);margin-top:4px;display:inline-block;text-decoration:underline;">Søk opp på standard.no ↗</a>
               </div>
               <span class="badge red">Utgått</span>
             </div>
