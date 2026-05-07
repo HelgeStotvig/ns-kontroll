@@ -736,7 +736,7 @@
 
     let html = `
       <div class="stats-grid">
-        <div class="stat-card"><div class="val red">${totalHits}</div><div class="stat-label">Utgåtte standarder totalt</div></div>
+        <div class="stat-card"><div class="val red">${totalHits}</div><div class="stat-label">Potensielt utgåtte standarder totalt</div></div>
         <div class="stat-card"><div class="val dark">${totalRefs}</div><div class="stat-label">Standardreferanser totalt</div></div>
         <div class="stat-card"><div class="val green">${totalOk}</div><div class="stat-label">Ikke berørt av listen</div></div>
       </div>
@@ -757,15 +757,15 @@
         </div>
         <div class="doc-badge-row">
           <span class="doc-badge total">${doc.totalInDoc} referanser funnet</span>
-          <span class="doc-badge hits">${doc.hits.length} utgåtte</span>
+          <span class="doc-badge hits">${doc.hits.length} potensielt utgåtte</span>
           <span class="doc-badge ok">${doc.notFound.length} OK</span>
         </div>`;
 
       if (doc.hits.length === 0) {
-        html += `<div class="all-ok">✓ Ingen utgåtte standarder funnet i dette dokumentet.</div>`;
+        html += `<div class="all-ok">✓ Ingen potensielt utgåtte standarder funnet i dette dokumentet.</div>`;
       } else {
         html += `<div class="result-block">
-          <div class="sub-label">Utgåtte standarder i ${esc(baseName)}</div>`;
+          <div class="sub-label">Potensielt utgåtte standarder i ${esc(baseName)}</div>`;
         for (const hit of doc.hits) {
           const replaced = hit.withdrawn.ErstattetAv
             ? `<span style="color:var(--ink);font-weight:500;">${esc(hit.withdrawn.ErstattetAv)}</span>`
@@ -775,11 +775,11 @@
               <div>
                 <div class="hit-ref">${esc(hit.withdrawn.Referanse)}</div>
                 ${hit.withdrawn.NorskTittel ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;">${esc(hit.withdrawn.NorskTittel)}</div>` : ''}
-                <div class="hit-found-as">Funnet som: ${esc(hit.docRef)}</div>
+                <div class="hit-found-as">Funnet i dokumentet som: ${esc(hit.docRef)}</div>
                 ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
 
               </div>
-              <span class="badge red">Utgått</span>
+              <span class="badge red">Potensielt utgått</span>
             </div>
             <div class="hit-replaced">Erstattet av: ${replaced}</div>
           </div>`;
@@ -810,7 +810,7 @@
     const wb = XLSX.utils.book_new();
 
     // Sheet 1: Sammendrag
-    const summaryData = [['Dokument', 'Totalt referanser', 'Utgåtte funn', 'Ikke berørt']];
+    const summaryData = [['Dokument', 'Totalt referanser', 'Potensielt utgåtte funn', 'Ikke berørt']];
     for (const doc of lastResults) {
       summaryData.push([doc.fileName, doc.totalInDoc, doc.hits.length, doc.notFound.length]);
     }
@@ -824,8 +824,8 @@
     applySheetStyle(summarySheet, summaryData, true);
     XLSX.utils.book_append_sheet(wb, summarySheet, 'Sammendrag');
 
-    // Sheet 2: Utgåtte funn
-    const hitsData = [['Dokument', 'Funnet som', 'Referanse (utgått)', 'Norsk tittel', 'Trukket tilbake', 'Erstattet av']];
+    // Sheet 2: Potensielt utgåtte funn
+    const hitsData = [['Dokument', 'Funnet i dokumentet som', 'Referanse (potensielt utgått)', 'Norsk tittel', 'Trukket tilbake', 'Erstattet av']];
     for (const doc of lastResults) {
       for (const hit of doc.hits) {
         hitsData.push([doc.fileName, hit.docRef, hit.withdrawn.Referanse, hit.withdrawn.NorskTittel || '', hit.withdrawn.Dato || '', hit.withdrawn.ErstattetAv || 'Ikke oppgitt']);
@@ -833,10 +833,10 @@
     }
     const hitsSheet = XLSX.utils.aoa_to_sheet(hitsData);
     applySheetStyle(hitsSheet, hitsData, false);
-    XLSX.utils.book_append_sheet(wb, hitsSheet, 'Utgåtte funn');
+    XLSX.utils.book_append_sheet(wb, hitsSheet, 'Potensielt utgåtte funn');
 
     // Sheet 3: OK-referanser
-    const okData = [['Dokument', 'Referanse (ikke i utgått-listen)']];
+    const okData = [['Dokument', 'Referanse (ikke i potensielt utgått-listen)']];
     for (const doc of lastResults) {
       for (const ref of doc.notFound) okData.push([doc.fileName, ref]);
     }
@@ -908,4 +908,3 @@
 </script>
 </body>
 </html>
-
