@@ -771,17 +771,15 @@
             ? `<span style="color:var(--ink);font-weight:500;">${esc(hit.withdrawn.ErstattetAv)}</span>`
             : `<em style="color:var(--muted);">Ikke oppgitt</em>`;
           html += `<div class="hit-row">
-            <div>
-              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                <div>
-                  <div class="hit-ref">${esc(hit.withdrawn.Referanse)}</div>
-                  ${hit.withdrawn.NorskTittel ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;">${esc(hit.withdrawn.NorskTittel)}</div>` : ''}
-                  <div class="hit-found-as">Funnet i dokumentet som: ${esc(hit.docRef)}</div>
-                  ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
-                </div>
-                <span class="badge red">Potensielt utgått</span>
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+              <div style="flex:1;min-width:0;">
+                <div class="hit-ref">${esc(hit.withdrawn.Referanse)}</div>
+                ${hit.withdrawn.NorskTittel ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;">${esc(hit.withdrawn.NorskTittel)}</div>` : ''}
+                <div class="hit-found-as">Funnet i dokumentet som: ${esc(hit.docRef)}</div>
+                ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
+                <div class="hit-replaced" style="margin-top:8px;">Erstattet av: ${replaced}</div>
               </div>
-              <div class="hit-replaced" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">Erstattet av: ${replaced}</div>
+              <span class="badge red" style="flex-shrink:0;margin-top:2px;">Potensielt utgått</span>
             </div>
           </div>`;
         }
