@@ -279,6 +279,19 @@
       text-transform: uppercase; white-space: nowrap;
     }
     .badge.red { background: var(--accent-light); color: var(--accent); border: 1px solid #f0c4b8; }
+    .badge.amber { background: var(--yellow-light); color: var(--yellow); border: 1px solid #e0d080; }
+
+    /* Advarsel per dokument (lite tekst / skannet PDF) */
+    .doc-warning {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 12px 16px; margin-bottom: 12px;
+      font-size: 0.75rem; color: var(--yellow);
+      background: var(--yellow-light); border: 1px solid #e0d080;
+      border-radius: 4px;
+    }
+
+    /* Retry-lenke i list-status */
+    .list-status a { color: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 
     /* OK chips */
     .ok-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 24px; }
@@ -329,7 +342,7 @@
       <span id="dataInfoText">Laster datoinfo…</span>
     </div>
     <div class="nc-header-tools">
-      <button class="nc-btn nc-btn--secondary nc-btn--sm" type="button" onclick="exportExcel()">Eksporter</button>
+      <button class="nc-btn nc-btn--secondary nc-btn--sm" type="button" id="topExportBtn" onclick="exportExcel()" disabled>Eksporter</button>
       <button class="nc-btn nc-btn--ghost nc-btn--sm" type="button" onclick="location.reload()">Nullstill</button>
     </div>
   </div>
@@ -353,10 +366,10 @@
 
     <div class="upload-grid">
       <div class="drop-zone" id="docZone"
-           ondragover="handleDragOver(event,'docZone')"
-           ondragleave="handleDragLeave(event,'docZone')"
-           ondrop="handleDrop(event,'docZone','doc')">
-        <input type="file" id="docInput" accept=".docx,.pdf" multiple onchange="handleFileSelect(event,'doc')" />
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event)">
+        <input type="file" id="docInput" accept=".docx,.pdf" multiple onchange="handleFileSelect(event)" />
         <div class="icon">📄</div>
         <div class="label">Dokumenter</div>
         <div class="accepted">.docx eller .pdf – flere tillatt</div>
@@ -376,8 +389,12 @@
   <div id="results" style="display:none;"></div>
 </div>
 
-<!-- SP-fix: laster biblioteker dynamisk med feilhåndtering -->
+<!-- SP-fix: laster biblioteker dynamisk med feilhåndtering.
+     Hvert bibliotek lastes uavhengig – feil på PDF/DOCX stopper ikke resten. -->
 <script>
+  // Global status for hvilke lesere som er tilgjengelige
+  window.libState = { xlsx: false, mammoth: false, pdf: false };
+
 (function loadLibs() {
   const statusEl = document.getElementById('libStatus');
 
@@ -389,70 +406,130 @@
     document.head.appendChild(s);
   }
 
-  // Laster XLSX → mammoth → pdf.js i rekkefølge
+  function refreshLibStatus() {
+    if (!libState.xlsx) return; // xlsx-feil håndteres separat
+    const missing = [];
+    if (!libState.mammoth) missing.push('.docx');
+    if (!libState.pdf) missing.push('.pdf');
+    if (missing.length === 0) {
+      statusEl.textContent = '';
+      statusEl.style.display = 'none';
+    } else {
+      statusEl.style.display = '';
+      statusEl.textContent = '⚠ Kunne ikke laste bibliotek for ' + missing.join(' og ') +
+        '. Disse filtypene kan ikke analyseres nå, men resten av verktøyet virker.';
+    }
+  }
+
+  // 1) xlsx-js-style – kreves for utgått-lista og for Excel-eksport (med styling)
   loadScript(
-    'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+    'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
     () => {
-      loadScript(
-        'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
-        () => {
-          loadScript(
-            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-            () => {
-              try {
-                pdfjsLib.GlobalWorkerOptions.workerSrc =
-                  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-              } catch(e) {}
-              statusEl.textContent = '';
-              statusEl.style.display = 'none';
-              loadWithdrawnList();
-            },
-            () => { statusEl.textContent = '⚠ Kunne ikke laste PDF-bibliotek. PDF-analyse vil ikke fungere.'; }
-          );
-        },
-        () => { statusEl.textContent = '⚠ Kunne ikke laste DOCX-bibliotek.'; }
-      );
+      libState.xlsx = true;
+      loadWithdrawnList();      // ikke avhengig av PDF/DOCX
+      refreshLibStatus();
     },
-    () => { statusEl.textContent = '⚠ Kunne ikke laste Excel-bibliotek. Sjekk nettverkstilgang.'; }
+    () => {
+      statusEl.style.display = '';
+      statusEl.textContent = '⚠ Kunne ikke laste Excel-bibliotek. Sjekk nettverkstilgang og last siden på nytt.';
+    }
+  );
+
+  // 2) mammoth (.docx) – uavhengig
+  loadScript(
+    'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
+    () => { libState.mammoth = true; refreshLibStatus(); },
+    () => { refreshLibStatus(); }
+  );
+
+  // 3) pdf.js (.pdf) – uavhengig
+  loadScript(
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    () => {
+      try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      } catch (e) {}
+      libState.pdf = true;
+      refreshLibStatus();
+    },
+    () => { refreshLibStatus(); }
   );
 })();
 </script>
 
 <script>
   let docFiles  = [];
-  let xlsxFile  = null;
-  let withdrawnList = null; // Lastes automatisk fra GitHub
+  let withdrawnList = null; // Lastes automatisk fra GitHub (evt. lokal reservefil)
   let lastResults = null;
 
-  const XLSX_URL = 'https://raw.githubusercontent.com/helgestotvig/ns-kontroll/main/utg%C3%A5tte-standarder.xlsx';
+  const XLSX_URL  = 'https://raw.githubusercontent.com/helgestotvig/ns-kontroll/main/utg%C3%A5tte-standarder.xlsx';
+  const LOCAL_XLSX = 'utgåtte-standarder.xlsx'; // reservekilde ved siden av index.html
 
   // ── Auto-last utgått-liste fra GitHub ────────────────────────────────────
 
+  // Slår opp en kolonneverdi robust: ignorerer store/små bokstaver, mellomrom
+  // og skilletegn i overskriften (fanger f.eks. skrivefeilen "tilbaketrek kingsdato").
+  function pickField(row, ...names) {
+    const norm = s => String(s).toLowerCase().replace(/[^0-9a-zæøå]/g, '');
+    const map = {};
+    for (const k in row) map[norm(k)] = row[k];
+    for (const n of names) {
+      const v = map[norm(n)];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+    }
+    return '';
+  }
+
+  async function fetchWithdrawnRows(url) {
+    const resp = await fetch(url, { cache: 'no-cache' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const buf      = await resp.arrayBuffer();
+    const workbook = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheet    = workbook.Sheets[workbook.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  }
+
   async function loadWithdrawnList() {
     const statusEl = document.getElementById('listStatus');
-    try {
-      const resp = await fetch(XLSX_URL);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const buf      = await resp.arrayBuffer();
-      const workbook = XLSX.read(buf, { type: 'array', cellDates: true });
-      const sheet    = workbook.Sheets[workbook.SheetNames[0]];
-      const rows     = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    statusEl.className = 'list-status';
+    statusEl.textContent = '⏳ Laster oversikt over utgåtte standarder…';
 
-      withdrawnList = rows.map(r => ({
-        Referanse:   String(r['Referanse']   || '').trim(),
-        NorskTittel: String(r['Norsk tittel'] || '').trim(),
-        ErstattetAv: String(r['Erstattet av'] || '').trim(),
-        Dato: formatDate(r['Nasjonal tilbaketrekkingsdato'] || r['Nasjonal tilbaketrek kingsdato'] || ''),
-      })).filter(r => r.Referanse);
+    try {
+      let rows, fromLocal = false;
+      try {
+        rows = await fetchWithdrawnRows(XLSX_URL);
+      } catch (primaryErr) {
+        console.warn('Henting fra GitHub feilet, prøver lokal reservefil:', primaryErr);
+        rows = await fetchWithdrawnRows(LOCAL_XLSX);
+        fromLocal = true;
+      }
+
+      withdrawnList = rows.map(r => {
+        const entry = {
+          Referanse:   String(pickField(r, 'Referanse') || '').replace(/\s+/g, ' ').replace(/(\d)\s*-\s*(\d)/g, '$1-$2').trim(),
+          NorskTittel: String(pickField(r, 'Norsk tittel') || '').replace(/\s+/g, ' ').trim(),
+          ErstattetAv: String(pickField(r, 'Erstattet av', 'Erstattes av') || '').trim(),
+          Dato: formatDate(pickField(r, 'Nasjonal tilbaketrekkingsdato', 'Tilbaketrekkingsdato', 'Dato')),
+        };
+        entry.parsed = parseRef(entry.Referanse);
+        return entry;
+      }).filter(r => r.Referanse && r.parsed);
 
       statusEl.className = 'list-status ok';
-      statusEl.textContent = '✓ Oversikt over utgåtte standarder lastet (' + withdrawnList.length + ' standarder)';
+      statusEl.textContent = '✓ Oversikt over utgåtte standarder lastet (' + withdrawnList.length +
+        ' standarder' + (fromLocal ? ' – fra lokal reservefil' : '') + ')';
       updateBtn();
       updateDataInfoBox(withdrawnList);
     } catch (e) {
-      statusEl.className = 'list-status error';
-      statusEl.textContent = '⚠ Kunne ikke laste oversikt: ' + e.message + '. Sjekk at filen ligger i GitHub-repositoryet.';
       console.error(e);
+      withdrawnList = null;
+      statusEl.className = 'list-status error';
+      statusEl.innerHTML = '⚠ Kunne ikke laste oversikt: ' + esc(e.message) +
+        '. <a id="retryListLink">Prøv igjen</a>';
+      const link = document.getElementById('retryListLink');
+      if (link) link.addEventListener('click', ev => { ev.preventDefault(); loadWithdrawnList(); });
+      updateBtn();
     }
   }
 
@@ -479,28 +556,28 @@
 
   // ── Drag & drop ──────────────────────────────────────────────────────────
 
-  function handleDragOver(e, id) {
+  function handleDragOver(e) {
     e.preventDefault();
     e.stopPropagation();
-    document.getElementById(id).classList.add('dragging');
+    document.getElementById('docZone').classList.add('dragging');
   }
-  function handleDragLeave(e, id) {
+  function handleDragLeave(e) {
     e.stopPropagation();
-    document.getElementById(id).classList.remove('dragging');
+    const zone = document.getElementById('docZone');
+    // Ikke fjern markeringen når pekeren bare beveger seg over et barn-element
+    if (e.relatedTarget && zone.contains(e.relatedTarget)) return;
+    zone.classList.remove('dragging');
   }
 
-  function handleDrop(e, id, type) {
+  function handleDrop(e) {
     e.preventDefault();
     e.stopPropagation();
-    document.getElementById(id).classList.remove('dragging');
-    const files = [...e.dataTransfer.files];
-    if (type === 'doc') addDocFiles(files);
-    else if (files[0]) setXlsxFile(files[0]);
+    document.getElementById('docZone').classList.remove('dragging');
+    addDocFiles([...e.dataTransfer.files]);
   }
 
-  function handleFileSelect(e, type) {
-    const files = [...e.target.files];
-    if (type === 'doc') addDocFiles(files);
+  function handleFileSelect(e) {
+    addDocFiles([...e.target.files]);
     e.target.value = '';
   }
 
@@ -543,16 +620,6 @@
         <span class="remove-btn" onclick="event.stopPropagation();removeDocFile(${i})">✕</span>
       </div>`
     ).join('');
-  }
-
-  function setXlsxFile(f) {
-    xlsxFile = f;
-    document.getElementById('xlsxZone').classList.add('has-file');
-    const s = document.getElementById('xlsxStatus');
-    s.className = 'file-name';
-    s.style.cssText = 'font-size:0.75rem;color:var(--green);font-weight:500;text-align:center;word-break:break-all;position:relative;z-index:1;pointer-events:none;';
-    s.textContent = '✓ ' + f.name;
-    updateBtn();
   }
 
   function updateBtn() {
@@ -625,7 +692,7 @@
 
     for (let p = 1; p <= pdf.numPages; p++) {
       const page    = await pdf.getPage(p);
-      const content = await page.getTextContent({ normalizeWhitespace: false });
+      const content = await page.getTextContent();
       const vp      = page.getViewport({ scale: 1 });
 
       const items = content.items.filter(i => i.str && i.str.trim() !== '');
@@ -682,57 +749,114 @@
 
   // ── NS reference matching ─────────────────────────────────────────────────
 
+  // Finn NS-referanser i tekst. Returnerer deduplikerte objekter { raw, display, parsed }
+  // der `raw` er slik det sto i dokumentet og `display` er kanonisk skrivemåte.
   function extractNSRefs(text) {
-    const pattern = /NS\s*[-–]?\s*(?:EN\s*[-–]?\s*)?(?:ISO\s*[-–]?\s*)?\d+(?:\s*[-–]\s*\d+)*(?:\s*:\s*\d{4})?(?:\s*\+\s*(?:NA|A\d+)(?:\s*:\s*\d{4})?)?/gi;
+    const pattern = /(?<![A-Za-zÆØÅæøå0-9])NS\s*[-–]?\s*(?:EN\s*[-–]?\s*)?(?:ISO\s*[-–\/]?\s*)?(?:IEC\s*[-–]?\s*)?\d+(?:\s*[-–]\s*\d+)*(?:\s*:\s*\d{4})?(?:\s*\+\s*(?:NA|A\d+)(?:\s*:\s*\d{4})?)?/gi;
     const raw = text.match(pattern) || [];
-    const normalized = raw.map(r => r.trim().replace(/\s+/g, ' ').toUpperCase());
-    return [...new Set(normalized)];
-  }
-
-  function normalizeKey(str) {
-    if (!str) return '';
-    return str.toUpperCase().replace(/\s+/g, '').replace(/[-–]/g, '');
-  }
-
-  function parseRef(ref) {
-    const clean = normalizeKey(ref);
-    const m = clean.match(/^(NS(?:EN(?:ISO)?)?)(\d+)(?::(\d{4}))?/);
-    if (!m) return null;
-    return { prefix: m[1], number: m[2], year: m[3] || '', fullKey: clean };
-  }
-
-  function findMatch(docRef, withdrawnList) {
-    const docKey    = normalizeKey(docRef);
-    const docParsed = parseRef(docRef);
-
-    let match = withdrawnList.find(w => normalizeKey(w.Referanse) === docKey);
-    if (match) return { match, matchType: 'exact' };
-    if (!docParsed) return null;
-
-    match = withdrawnList.find(w => {
-      const wKey = normalizeKey(w.Referanse);
-      return docKey.startsWith(wKey) && wKey.length >= 8;
-    });
-    if (match) return { match, matchType: 'prefix' };
-
-    match = withdrawnList.find(w => {
-      const wKey = normalizeKey(w.Referanse);
-      return wKey.startsWith(docKey) && docKey.length >= 8;
-    });
-    if (match) return { match, matchType: 'prefix' };
-
-    if (docParsed.number) {
-      match = withdrawnList.find(w => {
-        const p = parseRef(w.Referanse);
-        if (!p) return false;
-        if (p.prefix !== docParsed.prefix) return false;
-        if (p.number !== docParsed.number) return false;
-        if (docParsed.year && p.year && docParsed.year !== p.year) return false;
-        return true;
-      });
-      if (match) return { match, matchType: 'number' };
+    const seen = new Map();
+    for (const m of raw) {
+      const rawRef = m.trim().replace(/\s+/g, ' ');
+      const parsed = parseRef(rawRef);
+      if (!parsed) continue;
+      if (!seen.has(parsed.canonical)) {
+        seen.set(parsed.canonical, { raw: rawRef, display: parsed.canonical, parsed });
+      }
     }
+    return [...seen.values()];
+  }
+
+  // Strukturert parsing av én referanse.
+  // -> { org, number, parts:[], year, amendment, canonical, raw }
+  function parseRef(ref) {
+    if (!ref) return null;
+    const s = String(ref).toUpperCase()
+      .replace(/\u00A0/g, ' ')
+      .replace(/[\u2010-\u2015]/g, '-')
+      .trim();
+    if (s.indexOf('NS') !== 0) return null;
+
+    // Org-tokens: NS, evt. EN, evt. ISO/IEC – med valgfrie skilletegn
+    const orgMatch = s.match(/^NS(?:\s*[-\/]?\s*(?:EN|ISO|IEC))*/);
+    if (!orgMatch) return null;
+    const orgRaw = orgMatch[0];
+    const tokens = orgRaw.match(/NS|EN|ISO|IEC/g) || ['NS'];
+    const after  = tokens.slice(1);
+    const hasEN  = after.includes('EN');
+    const isoiec = [];
+    for (const t of after) {
+      if ((t === 'ISO' || t === 'IEC') && !isoiec.includes(t)) isoiec.push(t);
+    }
+    let org = 'NS';
+    if (hasEN) {
+      org = 'NS-EN';
+      if (isoiec.length) org += ' ' + isoiec.join('/');
+    } else if (isoiec.length) {
+      org = 'NS-' + isoiec.join('/');
+    }
+
+    // Etter org: hovednummer, delnumre, år, tillegg
+    const tail = s.slice(orgRaw.length).replace(/^[\s:\-\/]+/, '');
+    const numMatch = tail.match(/^(\d+)((?:\s*-\s*\d+)*)/);
+    if (!numMatch) return null;
+    const number = numMatch[1];
+    const parts  = (numMatch[2].match(/\d+/g) || []);
+
+    const yearMatch = tail.match(/:\s*(\d{4})/);
+    const year = yearMatch ? yearMatch[1] : '';
+
+    const amdMatch = tail.match(/\+\s*(NA|A\d+)/);
+    const amendment = amdMatch ? amdMatch[1] : '';
+
+    const canonical = org + ' ' + number +
+      parts.map(p => '-' + p).join('') +
+      (year ? ':' + year : '') +
+      (amendment ? '+' + amendment : '');
+
+    return { org, number, parts, year, amendment, canonical, raw: String(ref).trim() };
+  }
+
+  // Sammenlign en parset dokumentreferanse mot utgått-lista.
+  // Returnerer { match, confidence } der confidence er:
+  //   'exact'   – samme standard, år likt eller uspesifisert
+  //   'edition' – samme standard/delnr, men ulikt årstall
+  //   'partial' – samme hovednummer, men delnr uspesifisert på én side
+  function findMatch(parsed) {
+    if (!parsed || !withdrawnList) return null;
+
+    const sameBase = w => w.parsed &&
+      w.parsed.org === parsed.org &&
+      w.parsed.number === parsed.number;
+
+    const samePartsAs = w =>
+      w.parsed.parts.length === parsed.parts.length &&
+      w.parsed.parts.every((p, i) => p === parsed.parts[i]);
+
+    let m = withdrawnList.find(w => sameBase(w) && samePartsAs(w) &&
+      (!parsed.year || !w.parsed.year || parsed.year === w.parsed.year));
+    if (m) return { match: m, confidence: 'exact' };
+
+    m = withdrawnList.find(w => sameBase(w) && samePartsAs(w) &&
+      parsed.year && w.parsed.year && parsed.year !== w.parsed.year);
+    if (m) return { match: m, confidence: 'edition' };
+
+    m = withdrawnList.find(w => sameBase(w) &&
+      (parsed.parts.length === 0 || w.parsed.parts.length === 0));
+    if (m) return { match: m, confidence: 'partial' };
+
     return null;
+  }
+
+  function confidenceBadge(conf) {
+    if (conf === 'exact')   return '<span class="badge red">Utgått – eksakt treff</span>';
+    if (conf === 'edition') return '<span class="badge amber">Utgått – annen utgave/år</span>';
+    return '<span class="badge amber">Mulig utgått – delnr. uspesifisert</span>';
+  }
+
+  function confidenceLabel(conf) {
+    if (conf === 'exact')   return 'Eksakt treff';
+    if (conf === 'edition') return 'Annen utgave/år – verifiser';
+    return 'Delnr. uspesifisert – verifiser';
   }
 
   function formatDate(val) {
@@ -753,25 +877,67 @@
       return;
     }
 
+    // Sjekk at nødvendige lesere finnes for de valgte filtypene
+    const needPdf  = docFiles.some(f => /\.pdf$/i.test(f.name));
+    const needDocx = docFiles.some(f => /\.docx$/i.test(f.name));
+    if (needPdf && !(window.libState && libState.pdf)) {
+      showError('PDF-biblioteket er ikke tilgjengelig – fjern PDF-filene eller last siden på nytt.');
+      return;
+    }
+    if (needDocx && !(window.libState && libState.mammoth)) {
+      showError('DOCX-biblioteket er ikke tilgjengelig – fjern .docx-filene eller last siden på nytt.');
+      return;
+    }
+
     const btn     = document.getElementById('analyzeBtn');
     const btnText = document.getElementById('btnText');
     btn.disabled  = true;
-    btnText.innerHTML = '<span class="spinner"></span> Analyserer…';
 
     try {
       const docResults = [];
-      for (const file of docFiles) {
-        const docText = await extractText(file);
-        const docRefs = extractNSRefs(docText);
-        const hits = [], notFound = [];
+      for (let idx = 0; idx < docFiles.length; idx++) {
+        const file = docFiles[idx];
+        btnText.innerHTML = '<span class="spinner"></span> Analyserer fil ' +
+          (idx + 1) + ' av ' + docFiles.length + '…';
 
-        for (const ref of docRefs) {
-          const result = findMatch(ref, withdrawnList);
-          if (result) hits.push({ docRef: ref, withdrawn: result.match, matchType: result.matchType });
-          else notFound.push(ref);
+        let docText = '';
+        try {
+          docText = await extractText(file);
+        } catch (err) {
+          console.error(err);
+          docResults.push({
+            fileName: file.name, totalInDoc: 0, hits: [], notFound: [],
+            warning: 'Kunne ikke lese filen: ' + err.message,
+          });
+          continue;
         }
 
-        docResults.push({ fileName: file.name, totalInDoc: docRefs.length, hits, notFound });
+        const refs = extractNSRefs(docText);
+        const hits = [], notFound = [];
+
+        for (const ref of refs) {
+          const result = findMatch(ref.parsed);
+          if (result) {
+            hits.push({
+              docRef: ref.display, rawRef: ref.raw,
+              withdrawn: result.match, confidence: result.confidence,
+            });
+          } else {
+            notFound.push({ display: ref.display, raw: ref.raw });
+          }
+        }
+
+        const textLen = docText.replace(/\s+/g, '').length;
+        let warning = '';
+        if (textLen < 20) {
+          warning = 'Lite eller ingen tekst kunne hentes ut – filen kan være en skannet bilde-PDF. Vurder OCR før kontroll.';
+        } else if (refs.length === 0 && textLen < 400) {
+          warning = 'Fant ingen standardreferanser og dokumentet inneholder lite tekst – kan være skannet. Verifiser manuelt.';
+        }
+
+        docResults.push({
+          fileName: file.name, totalInDoc: refs.length, hits, notFound, warning,
+        });
       }
 
       lastResults = docResults;
@@ -798,9 +964,9 @@
 
     let html = `
       <div class="stats-grid">
-        <div class="stat-card"><div class="val red">${totalHits}</div><div class="stat-label">Potensielt utgåtte standarder totalt</div></div>
+        <div class="stat-card"><div class="val red">${totalHits}</div><div class="stat-label">Potensielt utgåtte funn (alle dokumenter)</div></div>
         <div class="stat-card"><div class="val dark">${totalRefs}</div><div class="stat-label">Standardreferanser totalt</div></div>
-        <div class="stat-card"><div class="val green">${totalOk}</div><div class="stat-label">Ikke berørt av listen</div></div>
+        <div class="stat-card"><div class="val green">${totalOk}</div><div class="stat-label">Ikke i listen</div></div>
       </div>
 
       <div class="export-row">
@@ -820,8 +986,12 @@
         <div class="doc-badge-row">
           <span class="doc-badge total">${doc.totalInDoc} referanser funnet</span>
           <span class="doc-badge hits">${doc.hits.length} potensielt utgåtte</span>
-          <span class="doc-badge ok">${doc.notFound.length} OK</span>
+          <span class="doc-badge ok">${doc.notFound.length} ikke i listen</span>
         </div>`;
+
+      if (doc.warning) {
+        html += `<div class="doc-warning"><span>⚠</span><span>${esc(doc.warning)}</span></div>`;
+      }
 
       if (doc.hits.length === 0) {
         html += `<div class="all-ok">✓ Ingen potensielt utgåtte standarder funnet i dette dokumentet.</div>`;
@@ -832,16 +1002,19 @@
           const replaced = hit.withdrawn.ErstattetAv
             ? `<span style="color:var(--ink);font-weight:500;">${esc(hit.withdrawn.ErstattetAv)}</span>`
             : `<em style="color:var(--muted);">Ikke oppgitt</em>`;
+          const foundAs = (hit.rawRef && hit.rawRef.toUpperCase() !== String(hit.docRef).toUpperCase())
+            ? `${esc(hit.docRef)} <span style="color:var(--muted);">(skrevet «${esc(hit.rawRef)}»)</span>`
+            : esc(hit.docRef);
           html += `<div class="hit-row">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
               <div style="flex:1;min-width:0;">
                 <div class="hit-ref">${esc(hit.withdrawn.Referanse)}</div>
                 ${hit.withdrawn.NorskTittel ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;font-style:italic;white-space:normal;word-break:break-word;">${esc(hit.withdrawn.NorskTittel)}</div>` : ''}
-                <div class="hit-found-as">Funnet i dokumentet som: ${esc(hit.docRef)}</div>
+                <div class="hit-found-as">Funnet i dokumentet som: ${foundAs}</div>
                 ${hit.withdrawn.Dato ? `<div class="hit-date">Trukket tilbake ${esc(hit.withdrawn.Dato)}</div>` : ''}
                 <div class="hit-replaced" style="margin-top:8px;">Erstattet av: ${replaced}</div>
               </div>
-              <span class="badge red" style="flex-shrink:0;margin-top:2px;">Potensielt utgått</span>
+              <span style="flex-shrink:0;margin-top:2px;">${confidenceBadge(hit.confidence)}</span>
             </div>
           </div>`;
         }
@@ -850,9 +1023,9 @@
 
       if (doc.notFound.length > 0) {
         html += `<div class="result-block" style="margin-top:10px;">
-          <div class="sub-label">Standarder ikke funnet i utgått-listen (OK) – ${esc(baseName)}</div>
+          <div class="sub-label">Standarder ikke i utgått-listen – ${esc(baseName)}</div>
           <div class="ok-chips">`;
-        for (const ref of doc.notFound) html += `<span class="ok-chip">${esc(ref)}</span>`;
+        for (const ref of doc.notFound) html += `<span class="ok-chip">${esc(ref.display)}</span>`;
         html += `</div></div>`;
       }
 
@@ -860,6 +1033,10 @@
     }
 
     el.innerHTML = html;
+
+    const topBtn = document.getElementById('topExportBtn');
+    if (topBtn) topBtn.disabled = false;
+
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -871,39 +1048,40 @@
     const wb = XLSX.utils.book_new();
 
     // Sheet 1: Sammendrag
-    const summaryData = [['Dokument', 'Totalt referanser', 'Potensielt utgåtte funn', 'Ikke berørt']];
+    const summaryData = [['Dokument', 'Totalt referanser', 'Potensielt utgåtte funn', 'Ikke i listen', 'Merknad']];
     for (const doc of lastResults) {
-      summaryData.push([doc.fileName, doc.totalInDoc, doc.hits.length, doc.notFound.length]);
+      summaryData.push([doc.fileName, doc.totalInDoc, doc.hits.length, doc.notFound.length, doc.warning || '']);
     }
     summaryData.push([
       'TOTALT',
       lastResults.reduce((s, d) => s + d.totalInDoc, 0),
       lastResults.reduce((s, d) => s + d.hits.length, 0),
       lastResults.reduce((s, d) => s + d.notFound.length, 0),
+      '',
     ]);
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
     applySheetStyle(summarySheet, summaryData, true);
     XLSX.utils.book_append_sheet(wb, summarySheet, 'Sammendrag');
 
     // Sheet 2: Potensielt utgåtte funn
-    const hitsData = [['Dokument', 'Funnet i dokumentet som', 'Referanse (potensielt utgått)', 'Norsk tittel', 'Trukket tilbake', 'Erstattet av']];
+    const hitsData = [['Dokument', 'Funnet i dokumentet som', 'Konfidens', 'Referanse (potensielt utgått)', 'Norsk tittel', 'Trukket tilbake', 'Erstattet av']];
     for (const doc of lastResults) {
       for (const hit of doc.hits) {
-        hitsData.push([doc.fileName, hit.docRef, hit.withdrawn.Referanse, hit.withdrawn.NorskTittel || '', hit.withdrawn.Dato || '', hit.withdrawn.ErstattetAv || 'Ikke oppgitt']);
+        hitsData.push([doc.fileName, hit.rawRef || hit.docRef, confidenceLabel(hit.confidence), hit.withdrawn.Referanse, hit.withdrawn.NorskTittel || '', hit.withdrawn.Dato || '', hit.withdrawn.ErstattetAv || 'Ikke oppgitt']);
       }
     }
     const hitsSheet = XLSX.utils.aoa_to_sheet(hitsData);
     applySheetStyle(hitsSheet, hitsData, false);
     XLSX.utils.book_append_sheet(wb, hitsSheet, 'Potensielt utgåtte funn');
 
-    // Sheet 3: OK-referanser
-    const okData = [['Dokument', 'Referanse (ikke i potensielt utgått-listen)']];
+    // Sheet 3: Referanser ikke i listen
+    const okData = [['Dokument', 'Referanse (ikke i utgått-listen)']];
     for (const doc of lastResults) {
-      for (const ref of doc.notFound) okData.push([doc.fileName, ref]);
+      for (const ref of doc.notFound) okData.push([doc.fileName, ref.display]);
     }
     const okSheet = XLSX.utils.aoa_to_sheet(okData);
     applySheetStyle(okSheet, okData, false);
-    XLSX.utils.book_append_sheet(wb, okSheet, 'OK-referanser');
+    XLSX.utils.book_append_sheet(wb, okSheet, 'Ikke i listen');
 
     // SP-fix: generer Blob og bruk midlertidig <a>-tag for nedlasting
     try {
@@ -912,7 +1090,7 @@
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      a.download = 'NS-sjekk-' + new Date().toISOString().split('T')[0] + '.xlsx';
+      a.download = 'NS-Kontroll-' + new Date().toISOString().split('T')[0] + '.xlsx';
       document.body.appendChild(a);
       a.click();
       setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
@@ -924,12 +1102,12 @@
   }
 
   function applySheetStyle(sheet, data, hasTotalsRow) {
-    const FONT = 'DM Mono';
-    const headerFill = { fgColor: { rgb: '1A1814' } };
+    const FONT = 'Consolas'; // finnes i Office; DM Mono gjør det ikke
+    const headerFill = { patternType: 'solid', fgColor: { rgb: '1A1814' } };
     const headerFont = { name: FONT, bold: true, color: { rgb: 'FFFDF8' }, sz: 10 };
     const bodyFont   = { name: FONT, sz: 10 };
     const totalFont  = { name: FONT, bold: true, sz: 10 };
-    const totFill    = { fgColor: { rgb: 'F4F1EB' } };
+    const totFill    = { patternType: 'solid', fgColor: { rgb: 'F4F1EB' } };
 
     const nCols = data[0].length;
     const nRows = data.length;
