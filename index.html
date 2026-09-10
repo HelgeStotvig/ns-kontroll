@@ -509,12 +509,15 @@
         const entry = {
           Referanse:   String(pickField(r, 'Referanse') || '').replace(/\s+/g, ' ').replace(/(\d)\s*-\s*(\d)/g, '$1-$2').trim(),
           NorskTittel: String(pickField(r, 'Norsk tittel') || '').replace(/\s+/g, ' ').trim(),
-          ErstattetAv: String(pickField(r, 'Erstattet av', 'Erstattes av') || '').trim(),
+          ErstattetAv: String(pickField(r, 'Erstattet av', 'Erstattes av') || '').replace(/\s+/g, ' ').replace(/(\d)\s*-\s*(\d)/g, '$1-$2').trim(),
           Dato: formatDate(pickField(r, 'Nasjonal tilbaketrekkingsdato', 'Tilbaketrekkingsdato', 'Dato')),
         };
-        entry.parsed = parseRef(entry.Referanse);
+        entry.parsed     = parseRef(entry.Referanse);      // kan være null for SN-*/NORSOK/uvanlige
+        entry.normKey     = normKey(entry.Referanse);       // for streng-basert reservematch
+        entry.normBase    = entry.normKey.replace(/(?:19|20)\d\d$/, '');
+        entry.erstNormKey = normKey(entry.ErstattetAv);
         return entry;
-      }).filter(r => r.Referanse && r.parsed);
+      }).filter(r => r.Referanse);                          // behold ALLE oppføringer, ikke bare NS-familien
 
       statusEl.className = 'list-status ok';
       statusEl.textContent = '✓ Oversikt over utgåtte standarder lastet (' + withdrawnList.length +
@@ -749,64 +752,78 @@
 
   // ── NS reference matching ─────────────────────────────────────────────────
 
-  // Finn NS-referanser i tekst. Returnerer deduplikerte objekter { raw, display, parsed }
-  // der `raw` er slik det sto i dokumentet og `display` er kanonisk skrivemåte.
+  // Normalisert nøkkel: bare bokstaver/tall i STORE bokstaver – for streng-basert sammenligning.
+  function normKey(s) {
+    return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  // Standard Norge-familier som kan stå mellom prefiks (NS/SN) og nummeret.
+  const REF_FAMILY = 'EN|ISO|IEC|CEN|CENELEC|CLC|CR|CWA|TR|TS|TP|HD';
+  const REF_RE = new RegExp(
+    '(?<![A-Za-zÆØÅæøå0-9])(?:NS|SN)\\s*[-–/]?\\s*' +
+    '(?:(?:' + REF_FAMILY + ')\\s*[-–/]?\\s*)*' +
+    '\\d+(?:\\s*[-–]\\s*\\d+)*' +
+    '(?:\\s*:\\s*\\d{4})?' +
+    '(?:\\s*[+/]\\s*(?:NA|AC|A\\d+)(?:\\s*:\\s*\\d{4})?)*', 'gi');
+  const NORSOK_RE = /(?<![A-Za-zÆØÅæøå0-9])NORSOK\s+[A-Z]{1,3}-?\d+(?:\s*:\s*\d{4})?/gi;
+
+  // Finn standardreferanser i tekst. Returnerer deduplikerte objekter { raw, display, parsed }.
   function extractNSRefs(text) {
-    const pattern = /(?<![A-Za-zÆØÅæøå0-9])NS\s*[-–]?\s*(?:EN\s*[-–]?\s*)?(?:ISO\s*[-–\/]?\s*)?(?:IEC\s*[-–]?\s*)?\d+(?:\s*[-–]\s*\d+)*(?:\s*:\s*\d{4})?(?:\s*\+\s*(?:NA|A\d+)(?:\s*:\s*\d{4})?)?/gi;
-    const raw = text.match(pattern) || [];
+    const raw = (text.match(REF_RE) || []).concat(text.match(NORSOK_RE) || []);
     const seen = new Map();
     for (const m of raw) {
       const rawRef = m.trim().replace(/\s+/g, ' ');
       const parsed = parseRef(rawRef);
-      if (!parsed) continue;
-      if (!seen.has(parsed.canonical)) {
-        seen.set(parsed.canonical, { raw: rawRef, display: parsed.canonical, parsed });
+      const key = parsed ? parsed.canonical : normKey(rawRef);
+      if (!key) continue;
+      if (!seen.has(key)) {
+        seen.set(key, { raw: rawRef, display: parsed ? parsed.canonical : rawRef, parsed: parsed || null });
       }
     }
     return [...seen.values()];
   }
 
-  // Strukturert parsing av én referanse.
-  // -> { org, number, parts:[], year, amendment, canonical, raw }
+  // Strukturert parsing. -> { org, number, parts:[], year, amendment, canonical, raw } eller null.
   function parseRef(ref) {
     if (!ref) return null;
-    const s = String(ref).toUpperCase()
+    let s = String(ref).toUpperCase()
       .replace(/\u00A0/g, ' ')
       .replace(/[\u2010-\u2015]/g, '-')
+      .replace(/\s+/g, ' ')
       .trim();
-    if (s.indexOf('NS') !== 0) return null;
 
-    // Org-tokens: NS, evt. EN, evt. ISO/IEC – med valgfrie skilletegn
-    const orgMatch = s.match(/^NS(?:\s*[-\/]?\s*(?:EN|ISO|IEC))*/);
+    // NORSOK har eget skjema, f.eks. "NORSOK D-001:2012"
+    let m = s.match(/^NORSOK\s+([A-Z]{1,3})-?(\d+)(?::\s*(\d{4}))?/);
+    if (m) {
+      const number = m[1] + '-' + m[2];
+      return { org: 'NORSOK', number, parts: [], year: m[3] || '', amendment: '',
+        canonical: 'NORSOK ' + number + (m[3] ? ':' + m[3] : ''), raw: String(ref).trim() };
+    }
+
+    if (!/^(?:NS|SN)/.test(s)) return null;
+
+    const orgMatch = s.match(new RegExp('^(?:NS|SN)(?:\\s*[-/]?\\s*(?:' + REF_FAMILY + '))*'));
     if (!orgMatch) return null;
     const orgRaw = orgMatch[0];
-    const tokens = orgRaw.match(/NS|EN|ISO|IEC/g) || ['NS'];
-    const after  = tokens.slice(1);
-    const hasEN  = after.includes('EN');
-    const isoiec = [];
-    for (const t of after) {
-      if ((t === 'ISO' || t === 'IEC') && !isoiec.includes(t)) isoiec.push(t);
-    }
-    let org = 'NS';
-    if (hasEN) {
-      org = 'NS-EN';
-      if (isoiec.length) org += ' ' + isoiec.join('/');
-    } else if (isoiec.length) {
-      org = 'NS-' + isoiec.join('/');
-    }
+    const toks = orgRaw.match(new RegExp('NS|SN|' + REF_FAMILY, 'g')) || [];
 
-    // Etter org: hovednummer, delnumre, år, tillegg
-    const tail = s.slice(orgRaw.length).replace(/^[\s:\-\/]+/, '');
-    const numMatch = tail.match(/^(\d+)((?:\s*-\s*\d+)*)/);
-    if (!numMatch) return null;
-    const number = numMatch[1];
-    const parts  = (numMatch[2].match(/\d+/g) || []);
+    // Kanonisk org – konsistent for både dokument og liste (utseende er sekundært).
+    let org = toks.join(' ')
+      .replace(/^NS EN/, 'NS-EN').replace(/^NS ISO/, 'NS-ISO').replace(/^NS IEC/, 'NS-IEC')
+      .replace(/^SN CEN/, 'SN-CEN').replace(/^SN CR/, 'SN-CR').replace(/^SN CWA/, 'SN-CWA')
+      .replace(/ISO IEC/, 'ISO/IEC').replace(/ (TR|TS|TP)\b/, '/$1');
 
-    const yearMatch = tail.match(/:\s*(\d{4})/);
-    const year = yearMatch ? yearMatch[1] : '';
+    const tail = s.slice(orgRaw.length).replace(/^[\s:\-/]+/, '');
+    const nm = tail.match(/^(\d+)((?:\s*-\s*\d+)*)/);
+    if (!nm) return null;
+    const number = nm[1];
+    const parts  = (nm[2].match(/\d+/g) || []);
 
-    const amdMatch = tail.match(/\+\s*(NA|A\d+)/);
-    const amendment = amdMatch ? amdMatch[1] : '';
+    const ym = tail.match(/:\s*(\d{4})/);
+    const year = ym ? ym[1] : '';
+
+    const am = tail.match(/[+/]\s*(NA|AC|A\d+)/);
+    const amendment = am ? am[1] : '';
 
     const canonical = org + ' ' + number +
       parts.map(p => '-' + p).join('') +
@@ -816,47 +833,67 @@
     return { org, number, parts, year, amendment, canonical, raw: String(ref).trim() };
   }
 
-  // Sammenlign en parset dokumentreferanse mot utgått-lista.
-  // Returnerer { match, confidence } der confidence er:
-  //   'exact'   – samme standard, år likt eller uspesifisert
-  //   'edition' – samme standard/delnr, men ulikt årstall
-  //   'partial' – samme hovednummer, men delnr uspesifisert på én side
-  function findMatch(parsed) {
-    if (!parsed || !withdrawnList) return null;
+  // Sammenlign dokumentets referanse mot utgått-lista.
+  // Returnerer { match, confidence }:
+  //   'exact'   – samme standard (org+nr+delnr+tillegg), år likt eller uspesifisert
+  //   'edition' – dokumentet siterer et årstall der en NYERE eller like ny utgave er trukket
+  //   'partial' – dokumentet siterer en del, mens HELE standarden er trukket
+  function findMatch(parsed, docRef) {
+    if (!withdrawnList) return null;
+    const dK = normKey(docRef || (parsed && parsed.raw) || '');
+    if (!dK) return null;
+    const dBase = dK.replace(/(?:19|20)\d\d$/, '');
 
-    const sameBase = w => w.parsed &&
-      w.parsed.org === parsed.org &&
-      w.parsed.number === parsed.number;
+    // Hopp over oppføringer der dokumentet allerede siterer erstatnings-standarden.
+    const cands = withdrawnList.filter(w => !w.erstNormKey || w.erstNormKey !== dK);
 
-    const samePartsAs = w =>
-      w.parsed.parts.length === parsed.parts.length &&
-      w.parsed.parts.every((p, i) => p === parsed.parts[i]);
+    if (parsed) {
+      const sameBase = w => w.parsed &&
+        w.parsed.org === parsed.org && w.parsed.number === parsed.number;
+      const samePartsAs = w =>
+        w.parsed.parts.length === parsed.parts.length &&
+        w.parsed.parts.every((p, i) => p === parsed.parts[i]);
 
-    let m = withdrawnList.find(w => sameBase(w) && samePartsAs(w) &&
-      (!parsed.year || !w.parsed.year || parsed.year === w.parsed.year));
+      let m = cands.find(w => sameBase(w) && samePartsAs(w) &&
+        w.parsed.amendment === parsed.amendment &&
+        (!parsed.year || !w.parsed.year || parsed.year === w.parsed.year));
+      if (m) return { match: m, confidence: 'exact' };
+
+      // Kun når dokumentet oppgir årstall OG den trukne utgaven er like ny / nyere
+      // (unngå å nagge om dagens referanse fordi en gammel utgave ble trukket for lengst).
+      m = cands.find(w => sameBase(w) && samePartsAs(w) &&
+        parsed.year && w.parsed.year && w.parsed.year >= parsed.year);
+      if (m) return { match: m, confidence: 'edition' };
+
+      m = cands.find(w => sameBase(w) &&
+        parsed.parts.length > 0 && w.parsed.parts.length === 0);
+      if (m) return { match: m, confidence: 'partial' };
+
+      return null;
+    }
+
+    // Streng-basert reserve for SN-*, NORSOK og andre uparsbare referanser.
+    let m = cands.find(w => w.normKey === dK);
     if (m) return { match: m, confidence: 'exact' };
-
-    m = withdrawnList.find(w => sameBase(w) && samePartsAs(w) &&
-      parsed.year && w.parsed.year && parsed.year !== w.parsed.year);
-    if (m) return { match: m, confidence: 'edition' };
-
-    m = withdrawnList.find(w => sameBase(w) &&
-      (parsed.parts.length === 0 || w.parsed.parts.length === 0));
-    if (m) return { match: m, confidence: 'partial' };
-
+    const dYear = (dK.match(/(?:19|20)\d\d$/) || [''])[0];
+    if (dYear) {
+      m = cands.find(w => w.normBase && w.normBase === dBase &&
+        w.normKey !== w.normBase && w.normKey.slice(-4) >= dYear);
+      if (m) return { match: m, confidence: 'edition' };
+    }
     return null;
   }
 
   function confidenceBadge(conf) {
     if (conf === 'exact')   return '<span class="badge red">Utgått – eksakt treff</span>';
     if (conf === 'edition') return '<span class="badge amber">Utgått – annen utgave/år</span>';
-    return '<span class="badge amber">Mulig utgått – delnr. uspesifisert</span>';
+    return '<span class="badge amber">Mulig utgått – verifiser</span>';
   }
 
   function confidenceLabel(conf) {
     if (conf === 'exact')   return 'Eksakt treff';
     if (conf === 'edition') return 'Annen utgave/år – verifiser';
-    return 'Delnr. uspesifisert – verifiser';
+    return 'Mulig utgått – verifiser';
   }
 
   function formatDate(val) {
@@ -916,7 +953,7 @@
         const hits = [], notFound = [];
 
         for (const ref of refs) {
-          const result = findMatch(ref.parsed);
+          const result = findMatch(ref.parsed, ref.raw);
           if (result) {
             hits.push({
               docRef: ref.display, rawRef: ref.raw,
@@ -1085,7 +1122,9 @@
 
     // SP-fix: generer Blob og bruk midlertidig <a>-tag for nedlasting
     try {
-      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      // bookSST: true -> ekte delte tekststrenger (t="s"); uten dette skriver
+      // biblioteket t="str"-celler som får Excel til å melde om «reparert innhold».
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array', bookSST: true });
       const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
